@@ -93,7 +93,7 @@ cp -r workflow-design ~/.claude/skills/
 cp -r workflow-design your-repo/.claude/skills/
 ```
 
-No dependencies: the three scripts are single-file, stdlib-only Python (3.10+).
+No dependencies: the four scripts are single-file, stdlib-only Python (3.10+).
 
 ## The tools
 
