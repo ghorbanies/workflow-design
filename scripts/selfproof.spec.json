@@ -1,0 +1,44 @@
+{
+  "_comment": "A real, runnable spec: it red-proofs redproof.py itself. Run it from this directory with `python redproof.py selfproof.spec.json`. Every case must report 'went red' — a case that stays green means the self-test no longer covers that guard. Use this file as the template for your own spec.",
+  "verify": "python redproof.py --selftest",
+  "cwd": ".",
+  "timeout": 180,
+  "cases": [
+    {
+      "label": "unique-match gate (0 or 2+ matches must abort the case)",
+      "file": "redproof.py",
+      "from": "    if len(exact) == 1:\n        return exact[0], \"\"",
+      "to": "    if False:\n        return exact[0], \"\""
+    },
+    {
+      "label": "hollow detection (green after removal must be reported)",
+      "file": "redproof.py",
+      "from": "            if code == 0:\n                results.append((\"HOLLOW\"",
+      "to": "            if False:\n                results.append((\"HOLLOW\""
+    },
+    {
+      "label": "baseline-must-be-green gate",
+      "file": "redproof.py",
+      "from": "    if code != 0:\n        die(f\"baseline is NOT green",
+      "to": "    if False:\n        die(f\"baseline is NOT green"
+    },
+    {
+      "label": "missing-pattern reason text",
+      "file": "redproof.py",
+      "from": "    if total == 0:\n        return None, \"pattern not found (checked LF and CRLF)\"",
+      "to": "    if False:\n        return None, \"pattern not found (checked LF and CRLF)\""
+    },
+    {
+      "label": "per-case restore inside the loop",
+      "file": "redproof.py",
+      "from": "            finally:\n                restore_write(path, original)",
+      "to": "            finally:\n                pass"
+    },
+    {
+      "label": "hash verification after restore",
+      "file": "redproof.py",
+      "from": "                if sha(read_bytes(path)) != sha(original):\n                    die(",
+      "to": "                if False:\n                    die("
+    }
+  ]
+}

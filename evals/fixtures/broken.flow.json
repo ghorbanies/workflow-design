@@ -1,0 +1,37 @@
+{
+  "name": "expense approval (draft - deliberately defective, used by eval-1)",
+  "initial": "submitted",
+
+  "states": {
+    "submitted": {},
+    "manager_review": {},
+    "approved": {},
+    "finance_queue": {},
+    "paid": {"terminal": true},
+    "archived_old": {}
+  },
+
+  "gates": {
+    "manager": {
+      "at": "submitted",
+      "auto": true,
+      "outcomes": {
+        "pass": "approved"
+      }
+    },
+    "finance": {
+      "at": "finance_queue",
+      "capability": "finance_approve",
+      "outcomes": {
+        "pass": "paid",
+        "reject": "manager_review"
+      }
+    }
+  },
+
+  "transitions": [
+    {"from": "approved", "to": "finance_queue", "actor": "system"},
+    {"from": "manager_review", "to": "submitted", "actor": "human"},
+    {"from": "submitted", "to": "approved", "actor": "timeout"}
+  ]
+}

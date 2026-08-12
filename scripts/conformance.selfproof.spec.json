@@ -1,0 +1,68 @@
+{
+  "_comment": "Red-proofs conformance.py's own checks. Run from this directory: `python redproof.py conformance.selfproof.spec.json`. Every case must report 'went red'.",
+  "verify": "python conformance.py --selftest",
+  "cwd": ".",
+  "timeout": 180,
+  "cases": [
+    {
+      "label": "off-model transition detection",
+      "file": "conformance.py",
+      "from": "        if allowed_kinds is None and (frm in states or frm is None) and dst in states:\n            hit(\"OFF-MODEL-TRANSITION\", f\"{frm} -> {dst}\"); ok = False",
+      "to": "        if False:\n            hit(\"OFF-MODEL-TRANSITION\", f\"{frm} -> {dst}\"); ok = False"
+    },
+    {
+      "label": "broken-chain detection",
+      "file": "conformance.py",
+      "from": "        elif frm != prev_by_item.get(item):",
+      "to": "        elif False:"
+    },
+    {
+      "label": "initial-state check on an item's first row",
+      "file": "conformance.py",
+      "from": "            if frm is not None or dst != flow.get(\"initial\"):",
+      "to": "            if False:"
+    },
+    {
+      "label": "exit-from-terminal detection",
+      "file": "conformance.py",
+      "from": "        if frm in terminals:\n            hit(\"EXIT-FROM-TERMINAL\", f\"{frm} -> {dst}\"); ok = False",
+      "to": "        if False:\n            hit(\"EXIT-FROM-TERMINAL\", f\"{frm} -> {dst}\"); ok = False"
+    },
+    {
+      "label": "actor-kind conformance on gate outcomes",
+      "file": "conformance.py",
+      "from": "            if r[\"kind\"] and r[\"kind\"] not in allowed_kinds:",
+      "to": "            if False:"
+    },
+    {
+      "label": "undeclared rejection reason detection",
+      "file": "conformance.py",
+      "from": "                elif r[\"reason\"] not in gate_reasons[gate]:",
+      "to": "                elif False:"
+    },
+    {
+      "label": "unknown-state detection",
+      "file": "conformance.py",
+      "from": "            if s is not None and s not in states:",
+      "to": "            if False:"
+    },
+    {
+      "label": "unused-edge reporting (model->log direction)",
+      "file": "conformance.py",
+      "from": "        if (frm, dst) not in seen_edges:",
+      "to": "        if False:"
+    },
+    {
+      "label": "trace fitness counts bad items",
+      "file": "conformance.py",
+      "from": "        if not ok:\n            bad_items.add(item)",
+      "to": "        if False:\n            bad_items.add(item)"
+    },
+    {
+      "label": "severity model: warnings alone must not fail the run",
+      "file": "conformance.py",
+      "from": "    rc = 1 if (errors or (strict and warns)) else 0",
+      "to": "    rc = 1 if (errors or warns) else 0"
+    }
+  ]
+}

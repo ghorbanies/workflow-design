@@ -1,0 +1,80 @@
+{
+  "_comment": "Red-proofs dynamics.py's own guards. Run from this directory: `python redproof.py dynamics.selfproof.spec.json`. Every case must report 'went red'.",
+  "verify": "python dynamics.py --selftest",
+  "cwd": ".",
+  "timeout": 180,
+  "cases": [
+    {
+      "label": "preflight refuses metrics when actor kind is missing",
+      "file": "dynamics.py",
+      "from": "    if not kind_ok:\n        rep.refuse(\"gate auto-pass rate\",",
+      "to": "    if False:\n        rep.refuse(\"gate auto-pass rate\","
+    },
+    {
+      "label": "preflight refuses time metrics on an unusable log",
+      "file": "dynamics.py",
+      "from": "    if not time_ok:\n        rep.refuse(\"time in station\",",
+      "to": "    if False:\n        rep.refuse(\"time in station\","
+    },
+    {
+      "label": "mixed-timezone detection (a parse check alone is blind to this)",
+      "file": "dynamics.py",
+      "from": "    mixed_tz = tz_rows > 0 and naive_rows > 0",
+      "to": "    mixed_tz = False"
+    },
+    {
+      "label": "terminal states excluded from station timings",
+      "file": "dynamics.py",
+      "from": "            if r[\"station\"] in terminal:\n                continue",
+      "to": "            if False:\n                continue"
+    },
+    {
+      "label": "open spans counted, not dropped (survivor bias)",
+      "file": "dynamics.py",
+      "from": "                   (julianday(COALESCE((SELECT MIN(n.{at}) FROM {t} n\n                        WHERE n.{item} = o.{item} AND n.{at} > o.{at}),\n                        :now)) - julianday({at})) * 24.0 AS hours",
+      "to": "                   (julianday((SELECT MIN(n.{at}) FROM {t} n\n                        WHERE n.{item} = o.{item} AND n.{at} > o.{at})\n                        ) - julianday({at})) * 24.0 AS hours"
+    },
+    {
+      "label": "min-n gate on ratios (small denominators are noise, not signal)",
+      "file": "dynamics.py",
+      "from": "            if r[\"decisions\"] < min_n:",
+      "to": "            if False:"
+    },
+    {
+      "label": "auto-pass counts only non-human decisions",
+      "file": "dynamics.py",
+      "from": "                   SUM(CASE WHEN {kind} <> 'human' THEN 1 ELSE 0 END) AS automatic",
+      "to": "                   SUM(CASE WHEN {kind} <> 'nobody' THEN 1 ELSE 0 END) AS automatic"
+    },
+    {
+      "label": "reversal counts only the second gate's rejections after a first pass",
+      "file": "dynamics.py",
+      "from": "                   SUM(CASE WHEN s.{to} LIKE 'reject%%' THEN 1 ELSE 0 END) AS reversed",
+      "to": "                   SUM(CASE WHEN s.{to} LIKE 'nothing%%' THEN 1 ELSE 0 END) AS reversed"
+    },
+    {
+      "label": "loop-back requires an earlier visit to the same state",
+      "file": "dynamics.py",
+      "from": "                          WHERE p.{item} = o.{item} AND p.{to} = o.{to} AND p.{at} < o.{at})",
+      "to": "                          WHERE p.{item} = o.{item} AND p.{to} = o.{to})"
+    },
+    {
+      "label": "never-terminal uses the terminal list",
+      "file": "dynamics.py",
+      "from": "    stuck = [r for r in current if r[\"state\"] not in terminal]",
+      "to": "    stuck = [r for r in current if r[\"state\"] not in []]"
+    },
+    {
+      "label": "variant paths ordered by timestamp, not insertion order",
+      "file": "dynamics.py",
+      "from": "            FROM {t} ORDER BY {item}, {at}, rowid\"\"\",",
+      "to": "            FROM {t} ORDER BY {item}, rowid\"\"\","
+    },
+    {
+      "label": "variant counting groups identical paths",
+      "file": "dynamics.py",
+      "from": "        variant_counts[sig] = variant_counts.get(sig, 0) + 1",
+      "to": "        variant_counts[sig] = 1"
+    }
+  ]
+}

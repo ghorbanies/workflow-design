@@ -1,0 +1,80 @@
+{
+  "_comment": "Red-proofs flowcheck.py's own checks. Run from this directory: `python redproof.py flowcheck.selfproof.spec.json`. Every case must report 'went red' — a case that stays green means flowcheck's self-test no longer covers that check.",
+  "verify": "python flowcheck.py --selftest",
+  "cwd": ".",
+  "timeout": 180,
+  "cases": [
+    {
+      "label": "token matching (precision: substring matching must not creep back)",
+      "file": "flowcheck.py",
+      "from": "    return set(_TOKEN.findall(str(name).lower()))",
+      "to": "    return {str(name).lower()}"
+    },
+    {
+      "label": "decided_by=system silencer",
+      "file": "flowcheck.py",
+      "from": "        if (states.get(dst) or {}).get(\"decided_by\") == \"system\":\n            continue",
+      "to": "        if False:\n            continue"
+    },
+    {
+      "label": "human-decision naming rule",
+      "file": "flowcheck.py",
+      "from": "        if tokens(dst) & HUMAN_WORDS:",
+      "to": "        if False:"
+    },
+    {
+      "label": "dead-end detection",
+      "file": "flowcheck.py",
+      "from": "            if name not in co:\n                found.append(Finding(\"DEAD-END\", name))",
+      "to": "            if False:\n                found.append(Finding(\"DEAD-END\", name))"
+    },
+    {
+      "label": "unreachable-state detection",
+      "file": "flowcheck.py",
+      "from": "            if name not in seen:\n                found.append(Finding(\"UNREACHABLE-STATE\", name))",
+      "to": "            if False:\n                found.append(Finding(\"UNREACHABLE-STATE\", name))"
+    },
+    {
+      "label": "gate-on-a-terminal-state check",
+      "file": "flowcheck.py",
+      "from": "        elif at in terminals:",
+      "to": "        elif False:"
+    },
+    {
+      "label": "rejection-to-self check",
+      "file": "flowcheck.py",
+      "from": "                if dest == at:",
+      "to": "                if False:"
+    },
+    {
+      "label": "auto-pass must have a distinct outcome",
+      "file": "flowcheck.py",
+      "from": "            if not autos or (set(autos.values()) & human_pass):",
+      "to": "            if False:"
+    },
+    {
+      "label": "stale-allow reporting (the allowlist cannot rot)",
+      "file": "flowcheck.py",
+      "from": "        if i not in used:",
+      "to": "        if False:"
+    },
+    {
+      "label": "allow entries must carry a reason",
+      "file": "flowcheck.py",
+      "from": "        if not str(a.get(\"reason\", \"\")).strip():",
+      "to": "        if False:"
+    },
+    {
+      "label": "warnings alone must not fail the run (severity model)",
+      "file": "flowcheck.py",
+      "from": "    return (1 if (errors or (strict and warns)) else 0), findings",
+      "to": "    return (1 if (errors or warns) else 0), findings"
+    },
+    {
+      "label": "NO-GATES detection",
+      "file": "flowcheck.py",
+      "from": "    if not gates:\n        found.append(Finding(\"NO-GATES\", \"-\"))",
+      "to": "    if False:\n        found.append(Finding(\"NO-GATES\", \"-\"))"
+    }
+  ]
+}

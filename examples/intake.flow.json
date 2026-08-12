@@ -1,0 +1,52 @@
+{
+  "name": "intake pipeline (worked example - passes flowcheck cleanly)",
+  "initial": "submitted",
+
+  "states": {
+    "submitted":            {},
+    "needs_info":           {},
+    "auto_cleared":         {"decided_by": "system",
+                             "note": "declared, so its name is not read as a human decision"},
+    "awaiting_review":      {},
+    "awaiting_fulfillment": {},
+    "closed":               {"terminal": true},
+    "rejected":             {"terminal": true},
+    "cancelled":            {"terminal": true}
+  },
+
+  "gates": {
+    "completeness": {
+      "at": "submitted",
+      "capability": "review_items",
+      "auto": true,
+      "reason_codes": ["missing_field", "illegible_attachment", "duplicate_of_open_item"],
+      "outcomes": {
+        "pass":      "awaiting_review",
+        "auto_pass": "auto_cleared",
+        "reject":    "needs_info"
+      }
+    },
+    "approval": {
+      "at": "awaiting_review",
+      "capability": "approve_items",
+      "reason_codes": ["out_of_policy", "insufficient_evidence", "wrong_owner"],
+      "outcomes": {
+        "pass":   "awaiting_fulfillment",
+        "reject": "rejected"
+      }
+    }
+  },
+
+  "transitions": [
+    {"from": "needs_info",           "to": "submitted",  "actor": "human",
+     "capability": "submit_item"},
+    {"from": "auto_cleared",         "to": "awaiting_review", "actor": "system"},
+    {"from": "awaiting_fulfillment", "to": "closed",     "actor": "human",
+     "capability": "fulfill_item"},
+    {"from": "submitted",            "to": "cancelled",  "actor": "human",
+     "capability": "cancel_item"},
+    {"from": "awaiting_review",      "to": "cancelled",  "actor": "human",
+     "capability": "cancel_item"},
+    {"from": "needs_info",           "to": "cancelled",  "actor": "timeout"}
+  ]
+}

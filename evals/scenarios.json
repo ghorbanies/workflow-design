@@ -1,0 +1,94 @@
+[
+  {
+    "id": "eval-1-model-lint",
+    "skills": ["workflow-design"],
+    "query": "I'm designing an approval workflow for expense reports. Here's my draft state machine in broken.flow.json — review it before I start building.",
+    "files": ["fixtures/broken.flow.json"],
+    "expected_behavior": [
+      "Triggers the workflow-design skill (does not answer as generic code review)",
+      "Runs flowcheck.py on the file instead of only eyeballing the JSON",
+      "Reports the specific violation codes from the tool's real output (at minimum an unreachable state, a gate with no rejection destination, and a system transition into a human-named state)",
+      "For each violation, explains the concrete failure it causes in production, not just the rule name",
+      "Proposes fixes that make flowcheck pass, and re-runs it to confirm exit 0 rather than declaring the fixes correct"
+    ]
+  },
+  {
+    "id": "eval-2-hollow-tests",
+    "skills": ["workflow-design"],
+    "query": "Our approval service has a test suite that's fully green, but last week a permissions bug shipped anyway. I don't trust the tests anymore. How do I find out which of them actually protect anything?",
+    "files": [],
+    "expected_behavior": [
+      "Frames the problem as hollow assertions ('a green suite means nothing we wrote a test for broke'), not as missing coverage percentage",
+      "Recommends the red-proof procedure: remove each guard, require the suite to go red, restore byte-for-byte",
+      "Points to scripts/redproof.py and explains the spec shape with concrete neutering patterns suited to permission guards (e.g. 'if (false) throw', a widened WHERE clause, a capability dropped from a list) - not just a mention of the tool. (Note: this scenario ships no code, so a literal ready-to-run spec cannot be expected; patterns plus the spec shape is the pass bar.)",
+      "Mentions the harness canary (self-test before the first real assertion, through the same code path)",
+      "Warns about the 'which guard answered' trap for permission checks specifically, since two layers often return the same status code",
+      "Does not claim any test is hollow without proposing to run the proof"
+    ]
+  },
+  {
+    "id": "eval-3-dynamics",
+    "skills": ["workflow-design"],
+    "query": "Here's the SQLite database from our ticket-triage system (demo.sqlite, table 'transitions'). Management wants to know where tickets get stuck and whether the review step is worth keeping.",
+    "files": ["fixtures/demo.sqlite"],
+    "expected_behavior": [
+      "Runs dynamics.py against the database instead of writing ad-hoc SQL from scratch",
+      "Answers 'where stuck' with time-in-station percentiles and queue age, not with row counts alone",
+      "Answers 'is the review step worth keeping' with the gate auto-pass rate and reversal rate, naming both the high and low readings of each ratio",
+      "Reports the never-terminal (leak) items as part of 'stuck', not only items sitting in a queue",
+      "If any metric is refused by the tool (missing actor kinds, mixed timestamps, small denominators), relays the refusal and does not compute the number another way"
+    ]
+  },
+  {
+    "id": "eval-4-live-change",
+    "skills": ["workflow-design"],
+    "query": "We're adding a compliance-approval step to our order workflow next sprint. There are about 2,000 orders currently in flight at various stages. What do we need to think about?",
+    "files": [],
+    "expected_behavior": [
+      "Triggers the skill's phase 4 (evolving) guidance rather than generic migration advice",
+      "Raises the in-flight question explicitly: what happens to orders already past the new gate's position",
+      "Presents the grandfather-vs-send-back choice, and names auto_pass with an explicit reason code (e.g. pre_existing_item) as the honest way to grandfather",
+      "Recommends stamping a flow version on items and writing a cutover marker into the transition log",
+      "Recommends capturing the phase-3 baseline metrics before the change ships, with the reason (it cannot be captured afterwards)",
+      "Warns against leaving items in a state the new definition makes impossible"
+    ]
+  },
+  {
+    "id": "eval-6-ai-gate",
+    "skills": ["workflow-design"],
+    "query": "We use an LLM to draft replies to customer complaints, and a support person approves each draft before it's sent. Volume is growing fast. My boss asks: (a) is the human review actually doing anything, and (b) can we safely skip review for some drafts?",
+    "files": [],
+    "expected_behavior": [
+      "Triggers the skill's AI-gates guidance rather than generic LLM-evaluation advice",
+      "For (a), proposes measuring from the transition log: reviewer decision latency (a seconds-fast tail means batch-clicking) and/or approval-rate asymmetry checked against a downstream signal - not a survey or gut feel",
+      "For (b), frames skipping as an explicit sampling policy recorded as auto_pass with its own reason code (e.g. sampled_out or confidence_above_threshold), never recorded under the human outcome's name",
+      "Insists the agent must not be able to write human decision fields in the log (trust boundary)",
+      "Mentions enumerated rejection reasons as the agent-improvement loop",
+      "Notes that a prompt/model change is a flow-definition change: version-stamp agent rows and capture gate metrics before the change"
+    ]
+  },
+  {
+    "id": "eval-7-sla",
+    "skills": ["workflow-design"],
+    "query": "Our ops team wants a 24-hour SLA on vendor-onboarding requests, with reminders and escalation if it's about to breach. How should we design this?",
+    "files": [],
+    "expected_behavior": [
+      "Triggers the skill's SLA guidance rather than generic project-management advice",
+      "Asks for or recommends measuring the station's current p90 before committing to the 24h number, with the reason (a bound below reality creates permanent breach and kills alarm value)",
+      "Requires an execution point: names what actually fires on breach (timeout transition, logged notification, or an explicitly labeled display-only field) instead of just adding a due-date column",
+      "States that due_at is computed once at entry from the policy then stored, so later policy changes do not rewrite existing promises",
+      "Designs escalation as a ladder where a later rung changes WHO is involved (not more reminders to the same person), each rung logged",
+      "Raises at least one clock trap: calendar vs business hours, or whether on-hold pauses the SLA clock"
+    ]
+  },
+  {
+    "id": "eval-5-negative-control",
+    "skills": ["workflow-design"],
+    "query": "My CSS grid layout breaks on mobile — the sidebar overlaps the content below 768px. Can you help?",
+    "files": [],
+    "expected_behavior": [
+      "Does NOT trigger the workflow-design skill",
+      "Answers the CSS question directly with no mention of workflows, gates, or transition logs"
+    ]
+  }
+]
