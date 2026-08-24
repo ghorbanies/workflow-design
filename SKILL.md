@@ -69,7 +69,7 @@ spec — including the red-prover itself.
 | Tool | What it does |
 |---|---|
 | [`scripts/flowcheck.py`](scripts/flowcheck.py) | Lints a flow definition: unreachable states, dead ends, gates with no rejection destination, rejections with no enumerated reason, automatic transitions wearing a human decision's name. Suppression only via a reasoned `allow` list, and an `allow` entry that suppresses nothing is itself reported. |
-| [`scripts/redproof.py`](scripts/redproof.py) | Removes each guard you name, runs your suite, requires it to go **red**, restores the file byte-for-byte. A guard that stays green when removed is the finding. |
+| [`scripts/redproof.py`](scripts/redproof.py) | Proves both sides of every guard: removes it and requires your suite to go **red**, then runs it in place against a **known-good artifact** and requires it to pass (catching guards that reject everything). Where a guard checks an agreement, it forces **both halves to be read from the built artifact** and refuses an assumed side. Restores files byte-for-byte. |
 | [`scripts/dynamics.py`](scripts/dynamics.py) | Computes the metrics below (plus the top real paths items take) from a SQLite transition log. Refuses any metric the log cannot support instead of printing a confident wrong number. |
 | [`scripts/conformance.py`](scripts/conformance.py) | Holds the real log against the declared flow model, both directions: observed transitions the model forbids (off-model moves, broken per-item chains, exits from terminal states, auto passes recorded as human, undeclared rejection reasons) and declared edges nobody has ever taken. Reports per-item **trace fitness**. No allowlist on purpose: a violation means the model file or the code is wrong, and the model file is cheap to fix. |
 
@@ -166,6 +166,23 @@ if the canary has any code that is not on the main path, it is not a self-test.
 For each guard, mechanically remove it, run the suite, require it to go **red**, restore the
 file byte-for-byte. A guard nobody has ever seen fail is a guard you have not tested.
 Commit before running the tool, verify a unique pattern match, and restore in a `finally`.
+
+**And green-proof it: a guard must also be able to say yes.**
+Red alone cannot tell a working guard from one that rejects *everything* — both go red when
+removed, and the always-red one hides longer because refusing everything looks careful. Run
+each guard, in place, against a **known-good artifact** and require it to pass — demanding
+the evidence line it prints, since exit 0 only proves the command ran. A release guard once
+reported all 37 brand assets missing from a **perfect** bundle (the names crossed an
+encoding boundary and arrived as `????`); wired in with `|| exit 1`, it would have made
+every future build impossible.
+
+**Read both halves of an agreement from the artifact.**
+When a guard checks that two things agree — certificate and manifest, client and server,
+package and host, migration and schema — a half read from an assumption proves nothing, and
+the assumed half is the one that breaks. A fingerprint was once matched perfectly against a
+published association file while the app's own declaration was missing the required field
+entirely: one side flawless, the other not speaking. Extract both sides from the built
+artifacts, never from a constant, a config you did not read, or documentation.
 
 **Ask "which guard answered", never "what status code came back".**
 When two layers both return the same code, an assertion on the code alone passes even when

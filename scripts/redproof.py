@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
 """
-redproof.py - prove that each guard in your code is actually covered by a test.
+redproof.py - prove that each guard in your code is actually covered by a test, and that
+it can still say yes.
 
-For every guard you name, it removes the guard, runs your test command, requires the
-suite to go RED, then restores the file byte-for-byte. A guard whose removal leaves the
-suite green is a guard nobody is testing - that is the finding this tool exists to produce.
+A guard has two sides, and a proof that checks only one is half a proof:
+
+  RED   - remove the guard, run your test command, require the suite to FAIL, restore the
+          file byte-for-byte. A guard whose removal leaves the suite green is a guard
+          nobody is testing.
+  GREEN - with the guard in place, run it against a known-HEALTHY artifact and require it
+          to PASS. A guard that rejects a good artifact is exactly as useless as one that
+          never fires - and it hides longer, because refusing everything looks careful.
+
+And when a guard checks an AGREEMENT between two sides (certificate vs manifest,
+client vs server, package vs host, migration vs schema), both sides must be read from the
+built artifact. Reading one side from an assumption proves nothing: the half you assumed
+is the half that breaks.
 
 Usage
 -----
@@ -19,16 +30,41 @@ Spec format (JSON)
       "verify":  "bash dev/run_all.sh",     // shell command; exit 0 == green
       "cwd":     ".",                       // optional, relative to the spec file
       "timeout": 300,                       // optional seconds per run
+      "require_green": false,               // true = a case with no "green" block fails
       "cases": [
         {
           "label": "scope filter on the queue query",
           "file":  "src/queries.py",
           "from":  "WHERE tenant_id = ? AND state = ?",
           "to":    "WHERE (? IS NOT NULL) AND state = ?",
-          "expect_output": "queue leaks across tenants"   // optional substring of the
-        }                                                 // failure output; asserts the
-      ]                                                   // RIGHT assertion went red
+          "expect_output": "queue leaks across tenants",  // optional substring of the
+                                                          // failure output; asserts the
+                                                          // RIGHT assertion went red
+
+          // --- the other side: this guard must still pass a good artifact ---
+          "green": {
+            "command": "python tools/check_bundle.py fixtures/healthy.zip",
+            "expect_output": "37/37 present"              // optional
+          },
+
+          // --- both halves of a handshake, each read from the artifact ---
+          "agreement": {
+            "name":  "app fingerprint vs published site association",
+            "left":  {"from": "artifact",
+                      "command": "keytool -printcert -jarfile build/app.apk",
+                      "extract": "SHA256: ([0-9A-F:]+)"}, // optional regex, group 1
+            "right": {"from": "artifact",
+                      "command": "unzip -p build/app.apk res/values/strings.xml",
+                      "extract": "SHA256: ([0-9A-F:]+)"},
+            "match": "equal"                              // or "contains"
+          }
+        }
+      ]
     }
+
+Every agreement side must declare `"from": "artifact"`. A side marked "assumed" (or one
+whose command produces nothing) fails the case: that is an assumption wearing a proof's
+clothes.
 
 Safety
 ------
@@ -37,6 +73,12 @@ Safety
 * Each pattern must match EXACTLY once; 0 or 2+ matches abort that case.
 * Files are restored in a finally block, on crash, and on Ctrl-C, then hash-verified.
 * Only files listed in the spec are ever touched.
+* A HARD kill cannot be trapped (SIGKILL, closing the terminal, a runner timing the
+  process out). If that happens mid-case, the neutered file stays on disk. Two tripwires
+  catch it: this tool warns about uncommitted changes in target files at the start of the
+  next run, and the baseline gate refuses to proceed because the suite is red. Recovery is
+  `git checkout -- <file>` - which is why "commit first" is the first rule and not advice.
+* Green and agreement checks run with the guard IN PLACE, after the file is restored.
 """
 
 from __future__ import annotations
@@ -204,7 +246,22 @@ def load_spec(spec_path: Path) -> tuple[str, Path, int, list[dict]]:
         for key in ("label", "file", "from", "to"):
             if key not in case:
                 die(f"case #{i + 1} is missing '{key}'")
-    return verify, cwd, timeout, cases
+        green = case.get("green")
+        if green is not None and not str(green.get("command", "")).strip():
+            die(f"case #{i + 1}: 'green' needs a 'command' that exercises the guard "
+                f"against a healthy artifact")
+        agr = case.get("agreement")
+        if agr is not None:
+            for side in ("left", "right"):
+                if side not in agr:
+                    die(f"case #{i + 1}: agreement is missing its '{side}' side - "
+                        f"an agreement with one side is not an agreement")
+                if not str((agr[side] or {}).get("command", "")).strip():
+                    die(f"case #{i + 1}: agreement '{side}' needs a 'command' that reads "
+                        f"the value out of the artifact")
+            if agr.get("match", "equal") not in ("equal", "contains"):
+                die(f"case #{i + 1}: agreement 'match' must be 'equal' or 'contains'")
+    return verify, cwd, timeout, cases, bool(spec.get("require_green", False))
 
 
 def die(msg: str, code: int = 2) -> "None":
@@ -212,9 +269,71 @@ def die(msg: str, code: int = 2) -> "None":
     sys.exit(code)
 
 
+# ── the other side of the proof ────────────────────────────────────────────────
+
+def check_green(case: dict, cwd: Path, timeout: int) -> tuple[str, str]:
+    """Guard in place, healthy artifact: it must still say yes.
+
+    A guard that refuses a known-good artifact is as useless as one that never fires,
+    and it survives longer because refusing everything reads as caution.
+    """
+    green = case["green"]
+    code, out = run_verify(green["command"], cwd, timeout)
+    if code != 0:
+        return ("ALWAYS-RED",
+                f"rejected a known-good artifact (exit {code}) - this guard cannot say yes")
+    want = green.get("expect_output")
+    if want and want not in out:
+        return ("ALWAYS-RED",
+                f"exited 0 on the healthy artifact but never printed {want!r} - "
+                f"it may not have run the guard at all")
+    return ("CLEAN", f"passed the healthy artifact (exit {code})")
+
+
+def read_side(side: dict, name: str, cwd: Path, timeout: int) -> tuple[str | None, str]:
+    """Read one half of an agreement out of the artifact. Returns (value, error)."""
+    origin = str(side.get("from", "")).strip().lower()
+    if origin != "artifact":
+        return (None, f"{name} side is declared {origin or 'undeclared'!r}, not 'artifact' - "
+                      f"an assumed half proves nothing about the half that breaks")
+    code, out = run_verify(side["command"], cwd, timeout)
+    if code != 0:
+        return (None, f"{name} side command failed (exit {code}) - the artifact was not read")
+    text = out.strip()
+    pattern = side.get("extract")
+    if pattern:
+        import re
+        m = re.search(pattern, out, re.MULTILINE | re.DOTALL)
+        if not m:
+            return (None, f"{name} side matched nothing for {pattern!r} - "
+                          f"the value is not in the artifact")
+        text = (m.group(1) if m.groups() else m.group(0)).strip()
+    if not text:
+        return (None, f"{name} side read an empty value - nothing was actually extracted")
+    return (text, "")
+
+
+def check_agreement(case: dict, cwd: Path, timeout: int) -> tuple[str, str]:
+    """Both halves of a handshake, each read from the built artifact - never assumed."""
+    agr = case["agreement"]
+    name = agr.get("name", "agreement")
+    left, err = read_side(agr["left"], "left", cwd, timeout)
+    if err:
+        return ("ONE-SIDED", f"{name}: {err}")
+    right, err = read_side(agr["right"], "right", cwd, timeout)
+    if err:
+        return ("ONE-SIDED", f"{name}: {err}")
+    mode = agr.get("match", "equal")
+    ok = (left == right) if mode == "equal" else (left in right or right in left)
+    if not ok:
+        return ("MISMATCH", f"{name}: the two artifacts disagree "
+                            f"({left[:40]!r} vs {right[:40]!r})")
+    return ("AGREED", f"{name}: both sides read from the artifact and {mode}")
+
+
 def proof(spec_path: Path, only: int | None, quiet: bool = False,
           collect: list | None = None) -> int:
-    verify, cwd, timeout, cases = load_spec(spec_path)
+    verify, cwd, timeout, cases, require_green = load_spec(spec_path)
     targets = sorted({(cwd / c["file"]).resolve() for c in cases})
     for t in targets:
         if not t.is_file():
@@ -247,10 +366,30 @@ def proof(spec_path: Path, only: int | None, quiet: bool = False,
             original = read_bytes(path)
             restorer.remember(path, original)
 
+            def other_sides() -> None:
+                """Green side and agreement, with the guard IN PLACE. Run for every case,
+                even one whose red side could not run - they are independent proofs."""
+                if case.get("green"):
+                    st, detail = check_green(case, cwd, timeout)
+                    results.append((st, f"{label} [green]", detail))
+                    mark, col = ((MARK_OK, GREEN) if st == "CLEAN" else (MARK_BAD, RED))
+                    say(f"{col}  {mark} [{idx}] {label} [green] - {detail}{OFF}")
+                elif require_green:
+                    results.append(("NO-GREEN", f"{label} [green]",
+                                    "no green side declared, and require_green is on"))
+                    say(f"{RED}  {MARK_BAD} [{idx}] {label} [green] - no green side "
+                        f"declared{OFF}")
+                if case.get("agreement"):
+                    st, detail = check_agreement(case, cwd, timeout)
+                    results.append((st, f"{label} [agreement]", detail))
+                    mark, col = ((MARK_OK, GREEN) if st == "AGREED" else (MARK_BAD, RED))
+                    say(f"{col}  {mark} [{idx}] {label} [agreement] - {detail}{OFF}")
+
             variant, reason = pick_unique(original, case["from"])
             if variant is None:
                 results.append(("SKIP", label, reason))
                 say(f"{RED}  {MARK_BAD} [{idx}] {label} - {reason}{OFF}")
+                other_sides()
                 continue
 
             # neutered replacement, in the same line-ending form as the match
@@ -261,6 +400,7 @@ def proof(spec_path: Path, only: int | None, quiet: bool = False,
             if broken == original:
                 results.append(("SKIP", label, "replacement changed nothing"))
                 say(f"{RED}  {MARK_BAD} [{idx}] {label} - replacement changed nothing{OFF}")
+                other_sides()
                 continue
 
             write_bytes(path, broken)
@@ -283,6 +423,8 @@ def proof(spec_path: Path, only: int | None, quiet: bool = False,
             else:
                 results.append(("RED", label, f"exit {code}"))
                 say(f"{GREEN}  {MARK_OK} [{idx}] {label} - went red (exit {code}){OFF}")
+
+            other_sides()
     finally:
         bad = restorer.restore_all()
         if bad:
@@ -291,17 +433,40 @@ def proof(spec_path: Path, only: int | None, quiet: bool = False,
     if collect is not None:
         collect.extend(results)
 
+    GOOD = {"RED", "CLEAN", "AGREED"}
     ran = [r for r in results]
-    reds = [r for r in ran if r[0] == "RED"]
-    say(f"\n{BOLD}{len(reds)}/{len(ran)} guards proven{OFF}")
-    for status, label, detail in ran:
-        if status != "RED":
-            say(f"{RED}  {status:6} {label} - {detail}{OFF}")
-    if len(reds) != len(ran):
+    red_side = [r for r in ran if not r[1].endswith(("[green]", "[agreement]"))]
+    green_side = [r for r in ran if r[1].endswith("[green]")]
+    agree_side = [r for r in ran if r[1].endswith("[agreement]")]
+    bad = [r for r in ran if r[0] not in GOOD]
+
+    parts = [f"{len([r for r in red_side if r[0] == 'RED'])}/{len(red_side)} proven red"]
+    if green_side:
+        parts.append(f"{len([r for r in green_side if r[0] == 'CLEAN'])}/{len(green_side)} "
+                     f"proven green")
+    if agree_side:
+        parts.append(f"{len([r for r in agree_side if r[0] == 'AGREED'])}/{len(agree_side)} "
+                     f"agreements two-sided")
+    say(f"\n{BOLD}{'  ·  '.join(parts)}{OFF}")
+
+    for status, label, detail in bad:
+        say(f"{RED}  {status:10} {label} - {detail}{OFF}")
+
+    if any(r[0] in ("HOLLOW", "WRONG") for r in bad):
         say(f"\n{DIM}A guard that stays green when removed means one of two things:{OFF}\n"
             f"{DIM}  {BULLET} the assertion is hollow (it cannot distinguish the two outcomes), or{OFF}\n"
             f"{DIM}  {BULLET} the fixture accidentally passes either way.{OFF}")
-    return 0 if ran and len(reds) == len(ran) else 1
+    if any(r[0] == "ALWAYS-RED" for r in bad):
+        say(f"\n{DIM}A guard that rejects a known-good artifact is as useless as one that{OFF}\n"
+            f"{DIM}  never fires - and it hides longer, because refusing everything looks{OFF}\n"
+            f"{DIM}  careful. Fix the guard, not the fixture.{OFF}")
+    if any(r[0] in ("ONE-SIDED", "MISMATCH") for r in bad):
+        say(f"\n{DIM}An agreement is only proven when BOTH halves are read from the built{OFF}\n"
+            f"{DIM}  artifact. The half you assumed is the half that breaks.{OFF}")
+    if not bad and not green_side and not agree_side:
+        say(f"{DIM}  {BULLET} no green side declared on any case - you have proven these{OFF}\n"
+            f"{DIM}    guards can fire, not that they can still say yes. Add \"green\" blocks.{OFF}")
+    return 0 if ran and not bad else 1
 
 
 # ── self-test: prove the tool is not blind ─────────────────────────────────────
@@ -343,6 +508,37 @@ check("same-tenant write works", add_item({"tenant": 1}, 1, "hello") == 1)
 
 print("PASS" if fails == 0 else "FAILED")
 sys.exit(1 if fails else 0)
+'''
+
+# --- fixtures for the OTHER side of the proof --------------------------------
+# A guard that inspects a bundle. The healthy bundle has all three entries.
+SELFTEST_CHECKER_OK = '''\
+import sys
+want = ["logo:a", "logo:b", "logo:c"]
+text = open(sys.argv[1], encoding="utf-8").read()
+found = [w for w in want if w in text]
+print(f"{len(found)}/{len(want)} present")
+sys.exit(0 if len(found) == len(want) else 1)
+'''
+
+# The same guard after the bug this feature exists for: it reads the wanted names
+# through a broken boundary, so nothing ever matches - and it rejects a PERFECT
+# bundle while looking careful. Removing it still turns a suite red, so the red
+# side alone can never tell these two apart.
+SELFTEST_CHECKER_ALWAYS_RED = '''\
+import sys
+want = ["logo:a", "logo:b", "logo:c"]
+text = open(sys.argv[1], encoding="utf-8").read()
+want = [w.encode("utf-8").decode("latin-1").replace("logo", "????") for w in want]
+found = [w for w in want if w in text]
+print(f"{len(found)}/{len(want)} present")
+sys.exit(0 if len(found) == len(want) else 1)
+'''
+
+# Prints a file, so agreement sides can be read without shell-quoting games.
+SELFTEST_SHOW = '''\
+import sys
+sys.stdout.write(open(sys.argv[1], encoding="utf-8").read())
 '''
 
 
@@ -446,6 +642,127 @@ def selftest() -> int:
               else f"{RED}  {MARK_BAD} silent restore failure: aborted={caught} "
                    f"restored={restored}{OFF}")
         bad += 0 if (caught and restored) else 1
+
+        # ── the other side of the proof: a guard must also be able to say yes ──
+        py = f'"{sys.executable}"'
+        (tmp / "checker_ok.py").write_text(SELFTEST_CHECKER_OK, encoding="utf-8")
+        (tmp / "checker_always_red.py").write_text(SELFTEST_CHECKER_ALWAYS_RED,
+                                                   encoding="utf-8")
+        (tmp / "show.py").write_text(SELFTEST_SHOW, encoding="utf-8")
+        (tmp / "healthy_bundle.txt").write_text("logo:a\nlogo:b\nlogo:c\n", encoding="utf-8")
+
+        base_case = {"label": "guard A (covered)", "file": "app.py",
+                     "from": 'if actor.get("tenant") != tenant:', "to": "if False:"}
+
+        last_rc = {"code": None}
+
+        def run(cases: list, **extra) -> list:
+            s = {"verify": f'{py} test_app.py', "cases": cases, **extra}
+            spec_path.write_text(json.dumps(s), encoding="utf-8")
+            got: list = []
+            last_rc["code"] = proof(spec_path, only=None, quiet=True, collect=got)
+            return got
+
+        def status_of(entries: list, suffix: str) -> str:
+            for st, lbl, _ in entries:
+                if lbl.endswith(suffix):
+                    return st
+            return "MISSING"
+
+        # ① a guard that passes the healthy bundle is CLEAN; the always-red one is caught
+        got = run([{**base_case, "green": {
+            "command": f'{py} checker_ok.py healthy_bundle.txt',
+            "expect_output": "3/3 present"}}])
+        healthy_ok = status_of(got, "[green]") == "CLEAN"
+
+        got = run([{**base_case, "green": {
+            "command": f'{py} checker_always_red.py healthy_bundle.txt'}}])
+        always_red_caught = status_of(got, "[green]") == "ALWAYS-RED"
+        # an ALWAYS-RED finding must also reach the exit code, not just the report
+        always_red_fails_run = last_rc["code"] != 0
+
+        # exit 0 alone is not proof the guard ran: demand the evidence it prints
+        got = run([{**base_case, "green": {
+            "command": f'{py} checker_ok.py healthy_bundle.txt',
+            "expect_output": "37/37 present"}}])
+        silent_pass_caught = status_of(got, "[green]") == "ALWAYS-RED"
+
+        for label, cond in [
+            ("a guard that passes a known-good artifact is reported CLEAN", healthy_ok),
+            ("a guard that rejects a known-good artifact is reported ALWAYS-RED",
+             always_red_caught),
+            ("an ALWAYS-RED guard makes the whole run fail", always_red_fails_run),
+            ("exit 0 without the expected evidence is not accepted as a pass",
+             silent_pass_caught),
+        ]:
+            print(f"{GREEN}  {MARK_OK} {label}{OFF}" if cond
+                  else f"{RED}  {MARK_BAD} {label}{OFF}")
+            bad += 0 if cond else 1
+
+        # a case with no green side is only a failure when require_green is on
+        got = run([base_case])
+        silent = not any(l.endswith("[green]") for _, l, _ in got)
+        got = run([base_case], require_green=True)
+        demanded = status_of(got, "[green]") == "NO-GREEN"
+        for label, cond in [
+            ("a missing green side is silent by default", silent),
+            ("require_green turns a missing green side into a finding", demanded),
+        ]:
+            print(f"{GREEN}  {MARK_OK} {label}{OFF}" if cond
+                  else f"{RED}  {MARK_BAD} {label}{OFF}")
+            bad += 0 if cond else 1
+
+        # ② both halves of an agreement must come from the artifact
+        (tmp / "built_app.txt").write_text("SHA256: AA:BB:CC\n", encoding="utf-8")
+        (tmp / "built_site.json").write_text(
+            '{"relation":["delegate_permission"],"fingerprints":["AA:BB:CC"]}\n',
+            encoding="utf-8")
+        (tmp / "other_site.json").write_text('{"fingerprints":["ZZ:YY:XX"]}\n',
+                                             encoding="utf-8")
+        art = {"from": "artifact", "command": f'{py} show.py built_app.txt',
+               "extract": r"SHA256: ([0-9A-F:]+)"}
+
+        got = run([{**base_case, "agreement": {
+            "name": "fingerprint handshake", "left": art,
+            "right": {"from": "artifact", "command": f'{py} show.py built_site.json',
+                      "extract": r"([0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2})"}}}])
+        two_sided = status_of(got, "[agreement]") == "AGREED"
+
+        got = run([{**base_case, "agreement": {
+            "name": "fingerprint handshake", "left": art,
+            "right": {"from": "assumed", "command": f'{py} show.py built_site.json'}}}])
+        assumed_caught = status_of(got, "[agreement]") == "ONE-SIDED"
+
+        got = run([{**base_case, "agreement": {
+            "name": "fingerprint handshake", "left": art,
+            "right": {"from": "artifact", "command": f'{py} show.py other_site.json',
+                      "extract": r"([0-9A-Z]{2}:[0-9A-Z]{2}:[0-9A-Z]{2})"}}}])
+        mismatch_caught = status_of(got, "[agreement]") == "MISMATCH"
+
+        got = run([{**base_case, "agreement": {
+            "name": "fingerprint handshake", "left": art,
+            "right": {"from": "artifact", "command": f'{py} show.py built_site.json',
+                      "extract": r"NOTHING_MATCHES_THIS_([0-9]+)"}}}])
+        no_match_caught = status_of(got, "[agreement]") == "ONE-SIDED"
+
+        # a side whose command succeeds but produces nothing at all: the artifact was
+        # opened and had nothing to say, which is still an assumption
+        (tmp / "empty_side.txt").write_text("   \n", encoding="utf-8")
+        got = run([{**base_case, "agreement": {
+            "name": "fingerprint handshake", "left": art,
+            "right": {"from": "artifact", "command": f'{py} show.py empty_side.txt'}}}])
+        empty_caught = status_of(got, "[agreement]") == "ONE-SIDED"
+
+        for label, cond in [
+            ("an agreement read from both artifacts is reported AGREED", two_sided),
+            ("a side declared 'assumed' is rejected as ONE-SIDED", assumed_caught),
+            ("two artifacts that disagree are reported MISMATCH", mismatch_caught),
+            ("a side whose pattern matches nothing is not proven", no_match_caught),
+            ("a side that reads an empty value counts as assumed, not proven", empty_caught),
+        ]:
+            print(f"{GREEN}  {MARK_OK} {label}{OFF}" if cond
+                  else f"{RED}  {MARK_BAD} {label}{OFF}")
+            bad += 0 if cond else 1
 
         print(f"\n{'self-test passed' if bad == 0 else 'SELF-TEST FAILED'}")
         return 0 if bad == 0 else 1

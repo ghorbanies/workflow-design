@@ -8,7 +8,11 @@
       "label": "unique-match gate (0 or 2+ matches must abort the case)",
       "file": "redproof.py",
       "from": "    if len(exact) == 1:\n        return exact[0], \"\"",
-      "to": "    if False:\n        return exact[0], \"\""
+      "to": "    if False:\n        return exact[0], \"\"",
+      "green": {
+        "command": "python redproof.py --selftest",
+        "expect_output": "runner exits 0 when every named guard is covered"
+      }
     },
     {
       "label": "hollow detection (green after removal must be reported)",
@@ -39,6 +43,48 @@
       "file": "redproof.py",
       "from": "                if sha(read_bytes(path)) != sha(original):\n                    die(",
       "to": "                if False:\n                    die("
+    },
+    {
+      "label": "green side: a guard that rejects a healthy artifact must be caught",
+      "file": "redproof.py",
+      "from": "    if code != 0:\n        return (\"ALWAYS-RED\",",
+      "to": "    if False:\n        return (\"ALWAYS-RED\","
+    },
+    {
+      "label": "green side: exit 0 without the expected output is not a pass",
+      "file": "redproof.py",
+      "from": "    if want and want not in out:",
+      "to": "    if False:"
+    },
+    {
+      "label": "agreement: a side must declare it was read from the artifact",
+      "file": "redproof.py",
+      "from": "    if origin != \"artifact\":",
+      "to": "    if False:"
+    },
+    {
+      "label": "agreement: an empty extraction is an assumption, not a value",
+      "file": "redproof.py",
+      "from": "    if not text:\n        return (None, f\"{name} side read an empty value",
+      "to": "    if False:\n        return (None, f\"{name} side read an empty value"
+    },
+    {
+      "label": "agreement: the two artifacts must actually match",
+      "file": "redproof.py",
+      "from": "    if not ok:\n        return (\"MISMATCH\",",
+      "to": "    if False:\n        return (\"MISMATCH\","
+    },
+    {
+      "label": "require_green turns a missing green side into a finding",
+      "file": "redproof.py",
+      "from": "                elif require_green:",
+      "to": "                elif False:"
+    },
+    {
+      "label": "green and agreement results count toward the exit code",
+      "file": "redproof.py",
+      "from": "    GOOD = {\"RED\", \"CLEAN\", \"AGREED\"}",
+      "to": "    GOOD = {\"RED\", \"CLEAN\", \"AGREED\", \"ALWAYS-RED\", \"ONE-SIDED\", \"MISMATCH\", \"NO-GREEN\"}"
     }
   ]
 }

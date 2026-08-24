@@ -82,6 +82,34 @@
     ]
   },
   {
+    "id": "eval-8-always-red-guard",
+    "skills": ["workflow-design"],
+    "query": "We added a release check that verifies all 37 brand assets are present in the build bundle. I wrote a test that proves it catches a bundle with a missing asset, and that test passes. Before I wire it into the build with `|| exit 1`, is there anything else I should check?",
+    "files": [],
+    "expected_behavior": [
+      "Identifies the missing half of the proof: the guard has only been shown to say NO, never to say YES on a healthy bundle",
+      "States plainly why red-proofing alone cannot distinguish a working guard from one that rejects everything (both go red when removed)",
+      "Warns specifically that wiring an always-red guard into the build with `|| exit 1` would block every future build",
+      "Recommends running the guard against a known-good bundle and asserting it passes, including asserting the evidence it prints rather than relying on exit 0 alone",
+      "Points to redproof.py's `green` block (or an equivalent executable check), not just verbal advice",
+      "Does not treat the existing passing test as sufficient"
+    ]
+  },
+  {
+    "id": "eval-9-two-sided-agreement",
+    "skills": ["workflow-design"],
+    "query": "Our mobile app has to be trusted by our website — the app's signing certificate fingerprint has to match the one published in the site's association file. I've written a check that extracts the fingerprint from our built APK and compares it to the fingerprint we have documented for the host. It matches. Are we good?",
+    "files": [],
+    "expected_behavior": [
+      "Answers no, and identifies the specific flaw: one side of the agreement is read from the artifact and the other from a documented/assumed value",
+      "States the general rule that both halves of an agreement must be read from the built artifacts, because the assumed half is the one that breaks",
+      "Recommends fetching the live association file (and/or reading the app's own declaration out of the package) instead of trusting documentation",
+      "Raises that the app's own side of the handshake must also be verified, not only the fingerprint value",
+      "Points to redproof.py's `agreement` block with both sides declared as read from the artifact",
+      "Does not accept the matching fingerprints as sufficient evidence"
+    ]
+  },
+  {
     "id": "eval-5-negative-control",
     "skills": ["workflow-design"],
     "query": "My CSS grid layout breaks on mobile — the sidebar overlaps the content below 768px. Can you help?",

@@ -2,7 +2,9 @@
 
 ## Contents
 1. The harness canary (self-test before the first real assertion; blind-spot and encoding canaries)
-2. Red proof (remove the guard, require red, restore; neutering patterns; line endings)
+2. Red proof (remove the guard, require red, restore) · the green side (a guard must also
+   be able to say yes) · two-sided agreements (read both halves from the artifact) ·
+   neutering patterns · line endings
 3. "Which guard answered?" (two layers, one status code)
 4. Fixtures that accidentally pass
 5. Coverage tests (enumerate from disk; reasoned allowlist)
@@ -100,6 +102,14 @@ Use [`../scripts/redproof.py`](../scripts/redproof.py) rather than hand-rolling 
 implements the guards above (unique match, line-ending variants, hash-verified restore,
 restore-on-crash, baseline-must-be-green).
 
+**Why "commit first" is a rule and not advice:** a hard kill — SIGKILL, a closed terminal,
+a CI runner timing the process out — cannot be trapped, and leaves the neutered file on
+disk. This happened once during this skill's own development. Nothing was lost, because two
+tripwires fired on the next run: the tool warned that a target file had uncommitted
+changes, and the baseline gate refused to proceed against a red suite. Recovery was one
+`git checkout`. Design your own tooling so that the failure mode is *loud and recoverable*,
+not silent.
+
 The runner is itself red-proofed by [`../scripts/selfproof.spec.json`](../scripts/selfproof.spec.json)
 — worth reading as a worked example, and worth noting how it was earned: on its first run,
 five of the runner's six guards went red and one stayed green. The uncovered one was the
@@ -119,6 +129,74 @@ it. That is the normal result of a first red proof, not an unusual one.
 
 Keeping arity and syntax valid matters: a neutered file that fails to parse makes *every*
 assertion red, which proves nothing about the specific guard.
+
+### The other side: a guard must also be able to say yes
+
+Red-proofing alone asks one question — *can this guard fire?* It cannot tell a working
+guard from one that **rejects everything**, because both go red when removed. And the
+always-red guard hides longer, because refusing everything reads as caution.
+
+The real case: a release guard checked that 37 brand logos were present in a build. It had
+a clean red proof. It also failed on a **perfect** bundle — every logo present — because
+the wanted names crossed an encoding boundary and arrived as `????`. Wired into the build
+with `|| exit 1`, merging it would have meant no bundle could ever be built again.
+
+So every guard gets two proofs:
+
+| Side | Input | Required outcome | Catches |
+|---|---|---|---|
+| **Red** | guard removed | suite fails | a guard nobody tests |
+| **Green** | guard in place, **known-good artifact** | guard passes | a guard that can only say no |
+
+In a spec, that is a `green` block naming a command that runs the guard against a healthy
+fixture, plus the evidence it must print:
+
+```json
+{ "label": "bundle completeness",
+  "file": "tools/check_bundle.py", "from": "...", "to": "...",
+  "green": { "command": "python tools/check_bundle.py fixtures/healthy.zip",
+             "expect_output": "37/37 present" } }
+```
+
+`expect_output` matters more here than on the red side: exit 0 proves the command ran, not
+that the guard ran. Demand the line that only a real check can print.
+
+Set `"require_green": true` at the spec level once your suite has healthy fixtures — then a
+guard with no green side is itself a finding, instead of a habit.
+
+### Two-sided agreements: read both halves from the artifact
+
+When a guard checks that two things **agree** — certificate and manifest, client and
+server, package and host, migration and schema — the proof is only as good as its weaker
+half. Reading one half from the artifact and the other from an assumption looks like a
+handshake and is a monologue.
+
+The real case: a mobile app's certificate fingerprint was compared against the association
+file published on the host. Exact match, and the conclusion was announced. It was wrong —
+nobody checked whether the **app itself** asked the question correctly, and the required
+`relation` field was missing from the app's own declaration entirely. One side of the
+handshake was flawless; the other was not speaking.
+
+Rule: **both sides come from the built artifact**. Never a constant in the test, never "the
+host is configured that way", never a value copied from documentation.
+
+```json
+"agreement": {
+  "name":  "app fingerprint vs published site association",
+  "left":  { "from": "artifact", "command": "keytool -printcert -jarfile build/app.apk",
+             "extract": "SHA256: ([0-9A-F:]+)" },
+  "right": { "from": "artifact", "command": "curl -s https://host/.well-known/assetlinks.json",
+             "extract": "\"sha256_cert_fingerprints\":\\s*\\[\\s*\"([^\"]+)\"" },
+  "match": "equal"
+}
+```
+
+`redproof.py` refuses a side that is not declared `"from": "artifact"`, and refuses one
+whose command runs but extracts nothing — an empty read is an assumption with extra steps.
+
+Where a genuine constant is unavoidable (a protocol literal like `delegate_permission`),
+assert its **presence inside the artifact** rather than assuming it: make the artifact
+state it, then read it back.
 
 ### Line endings
 
@@ -289,6 +367,9 @@ source trees get emptied. Rules:
 - [ ] Known blind spots asserted with `expect_missing`, not comments.
 - [ ] Encoding canary if any assertion depends on non-ASCII text.
 - [ ] Every guard red-proofed; files restored and hash-verified.
+- [ ] Every guard **green-proofed**: it passes a known-good artifact, and prints evidence
+      that the check actually ran.
+- [ ] Every agreement reads **both** halves from the built artifact — no side assumed.
 - [ ] Every "still green after removal" result triaged as hollow assertion or complicit fixture.
 - [ ] Assertions distinguish *which* layer answered.
 - [ ] Fixtures are hostile to the trivial implementation.
