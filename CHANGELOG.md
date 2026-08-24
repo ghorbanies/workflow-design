@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.0 — 2026-09-01
+## 1.1.0 — 2026-08-24
 
 Both halves of a proof. `redproof.py` used to ask one question — *can this guard fire?* —
 and two documented production failures showed that is half an answer.
